@@ -3,7 +3,10 @@ import 'server-only'
 import { randomUUID } from 'node:crypto'
 import mqtt, { type MqttClient } from 'mqtt'
 
-export const MQTT_BROKER = 'wss://broker.hivemq.com:8884/mqtt'
+// Broker privado (EMQX Cloud, HiveMQ Cloud...) por MQTT sobre TLS. Si MQTT_HOST no existe, usa el broker público.
+const PUBLIC_BROKER = 'wss://broker.hivemq.com:8884/mqtt'
+const brokerUrl = () => (process.env.MQTT_HOST ? `mqtts://${process.env.MQTT_HOST}:${process.env.MQTT_PORT ?? '8883'}` : PUBLIC_BROKER)
+const brokerAuth = () => (process.env.MQTT_USER ? { username: process.env.MQTT_USER, password: process.env.MQTT_PASS ?? '' } : {})
 export const STATE_TOPIC = 'usil/iot/parking/p01/estado'
 export const AVAILABILITY_TOPIC = 'usil/iot/parking/p01/disponibilidad'
 export const COMMAND_TOPIC = 'usil/iot/parking/p01/cmd'
@@ -24,7 +27,8 @@ export interface ServerTelemetrySnapshot {
 }
 
 function createClient(timeoutMs: number) {
-  return mqtt.connect(MQTT_BROKER, {
+  return mqtt.connect(brokerUrl(), {
+    ...brokerAuth(),
     clientId: `parkgate-web-${randomUUID().slice(0, 12)}`,
     clean: true,
     connectTimeout: Math.min(timeoutMs, 2_500),
@@ -96,21 +100,58 @@ export async function readAvailableSpots(timeoutMs = 1_500) {
   return snapshot.state?.libres ?? null
 }
 
-export async function publishCommand(command: string) {
-  const client = createClient(4_000)
-  await new Promise<void>((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error('Tiempo de espera agotado al conectar con HiveMQ.')), 4_000)
-    const finish = (error?: Error | null) => {
-      clearTimeout(timeout)
-      client.end(true)
+declare global {
+  var parkGatePublisher: MqttClient | undefined
+}
+
+function getPublisher() {
+  const current = globalThis.parkGatePublisher
+  if (current && !current.disconnected) return current
+  const client = mqtt.connect(brokerUrl(), {
+    ...brokerAuth(),
+    clientId: `parkgate-pub-${randomUUID().slice(0, 12)}`, // único por instancia: dos instancias con el mismo id se expulsan
+    clean: true,
+    connectTimeout: 4_000,
+    keepalive: 20,
+    reconnectPeriod: 2_000,
+  })
+  client.on('error', () => undefined)
+  globalThis.parkGatePublisher = client
+  return client
+}
+
+function resetPublisher() {
+  globalThis.parkGatePublisher?.end(true)
+  globalThis.parkGatePublisher = undefined
+}
+
+function publishOnce(command: string, timeoutMs: number) {
+  const client = getPublisher()
+  return new Promise<void>((resolve, reject) => {
+    let settled = false
+    const done = (error?: Error | null) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
       if (error) reject(error)
       else resolve()
     }
-
-    client.once('connect', () => {
-      client.publish(COMMAND_TOPIC, command, { qos: 1, retain: false }, finish)
-    })
-    client.once('error', (error) => finish(error))
-    client.once('close', () => finish(new Error('Conexión MQTT cerrada antes de publicar.')))
+    const timer = setTimeout(() => done(new Error('Tiempo de espera agotado al publicar en el broker MQTT.')), timeoutMs)
+    const send = () => {
+      if (settled) return // si ya expiró, no publicar un comando atrasado
+      client.publish(COMMAND_TOPIC, command, { qos: 1, retain: false }, (error) => done(error ?? null))
+    }
+    if (client.connected) send()
+    else client.once('connect', send)
   })
+}
+
+/** Reutiliza la conexión entre llamadas; si falla, la recrea y reintenta una vez. */
+export async function publishCommand(command: string) {
+  try {
+    await publishOnce(command, 3_000)
+  } catch {
+    resetPublisher()
+    await publishOnce(command, 4_000)
+  }
 }
