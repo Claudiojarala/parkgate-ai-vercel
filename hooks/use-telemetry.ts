@@ -4,7 +4,9 @@ import { useEffect, useMemo, useState } from 'react'
 import mqtt, { type MqttClient } from 'mqtt'
 import type { Availability, GateState, SpaceSensor, TelemetryState } from '@/types/parking'
 
-const BROKER = 'wss://broker.hivemq.com:8884/mqtt'
+const BROKER = process.env.NEXT_PUBLIC_MQTT_WS_URL || 'wss://broker.hivemq.com:8884/mqtt'
+const MQTT_USER = process.env.NEXT_PUBLIC_MQTT_USER
+const MQTT_PASS = process.env.NEXT_PUBLIC_MQTT_PASS
 const STATE_TOPIC = 'usil/iot/parking/p01/estado'
 const AVAILABILITY_TOPIC = 'usil/iot/parking/p01/disponibilidad'
 const initialTelemetry: TelemetryState = {
@@ -51,6 +53,7 @@ export function useTelemetry() {
     const connect = () => {
       if (stopped) return
       client = mqtt.connect(BROKER, {
+        ...(MQTT_USER ? { username: MQTT_USER, password: MQTT_PASS ?? '' } : {}),
         clientId: `parkgate-ui-${Math.random().toString(36).slice(2, 10)}`,
         clean: true,
         connectTimeout: 8_000,
