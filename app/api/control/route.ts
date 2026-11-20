@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { isAuthenticatedRequest, isDemoMode } from '@/lib/auth'
 import { controlSchema, describeCommand, toMqttPayload } from '@/lib/commands'
-import { publishCommand, readTelemetry } from '@/lib/mqtt'
+import { publishCommand } from '@/lib/mqtt'
 import { registerEvent } from '@/lib/parking-service'
 import type { ParkingEventType } from '@/types/parking'
 
@@ -36,16 +36,12 @@ export async function POST(request: Request) {
   if (demoMode) {
     alerta = 'Modo demostración: comando simulado; no se envió al ESP32.'
   } else {
+    // El panel ya deshabilita los botones si el nodo está fuera de línea; aquí se publica directo.
     try {
-      const telemetry = await readTelemetry(1_500)
-      if (telemetry.availability !== 'online' || !telemetry.state) {
-        alerta = 'Nodo ESP32 sin telemetría reciente; el comando fue bloqueado por seguridad.'
-      } else {
-        await publishCommand(payload)
-        mqttOk = true
-      }
+      await publishCommand(payload)
+      mqttOk = true
     } catch {
-      alerta = 'No se pudo conectar con HiveMQ; el comando no fue enviado.'
+      alerta = 'No se pudo publicar en el broker MQTT; el comando no fue enviado.'
     }
   }
 
