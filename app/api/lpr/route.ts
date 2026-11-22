@@ -32,8 +32,10 @@ export async function POST(request: Request) {
     } else {
       try {
         plate = await readPlate(checked.image)
-      } catch {
-        recognitionAlert = 'Gemini no pudo analizar la foto. Revisa GEMINI_API_KEY o intenta otra toma.'
+      } catch (error) {
+        console.error('[lpr] Lectura falló:', error)
+        const detail = error instanceof Error ? error.message.replace(/\s+/g, ' ').slice(0, 220) : ''
+        recognitionAlert = `El lector de placas no pudo analizar la foto. Intenta otra toma o revisa el servicio de reconocimiento.${detail ? ` Detalle: ${detail}` : ''}`
       }
     }
 
@@ -86,4 +88,3 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, error: 'No se pudo completar la validación. Revisa MongoDB Atlas y la conexión de red.' }, { status: 503, headers: { 'Cache-Control': 'no-store' } })
   }
 }
-
