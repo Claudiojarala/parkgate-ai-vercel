@@ -21,10 +21,19 @@ export async function readPlate(image: File): Promise<string | null> {
   const response = await ai.models.generateContent({
     model: 'gemini-2.5-flash',
     contents: [
-      { text: 'responde solo con los caracteres de la placa o SIN_PLACA' },
+      {
+        text:
+          'La imagen puede mostrar una placa vehicular peruana (3 letras/números, guion, 3 letras/números; por ejemplo ABC-123), '
+          + 'incluso si es pequeña o está impresa en papel. Ignora la palabra "PERÚ" y cualquier otro texto. '
+          + 'Responde SOLO con los 6 caracteres de la placa en formato ABC-123. Si no hay ninguna placa visible, responde SIN_PLACA.',
+      },
       { inlineData: { data: bytes, mimeType: image.type } },
     ],
-    config: { maxOutputTokens: 24, temperature: 0 },
+    // gemini-2.5-flash "piensa" por defecto y esos tokens cuentan dentro de maxOutputTokens:
+    // con un límite de 24 la respuesta salía vacía (SIN_LECTURA). Se apaga el razonamiento.
+    config: { maxOutputTokens: 128, temperature: 0, thinkingConfig: { thinkingBudget: 0 } },
   })
-  return normalizePlate(response.text ?? '')
+  const text = (response.text ?? '').toUpperCase()
+  const match = text.match(/[A-Z0-9]{3}\s*[-–—]?\s*[A-Z0-9]{3}/)
+  return normalizePlate(match ? match[0] : text)
 }
